@@ -1,0 +1,36 @@
+version: 0.1
+
+services:
+  - type: web
+    name: opendevagent-backend
+    runtime: python
+    startCommand: "gunicorn -w 4 -b 0.0.0.0 backend.main:app"
+    variables:
+      PYTHON_VERSION: "3.11"
+    autoDeploy: true
+
+  - type: web
+    name: opendevagent-frontend
+    runtime: node
+    startCommand: "npm run build && npm run start"
+    variables:
+      NODE_ENV: "production"
+      NODE_VERSION: "20"
+    autoDeploy: true
+
+plugins:
+  - type: postgresql
+    name: postgres
+
+  - type: redis
+    name: redis
+
+variables:
+  DATABASE_URL:
+    reference: postgres.DATABASE_URL
+  REDIS_URL:
+    reference: redis.REDIS_URL
+  OPENROUTER_API_KEY:
+    description: "OpenRouter API Key"
+  DEBUG:
+    default: "false"
