@@ -1,0 +1,688 @@
+# Kubernetes Deployment Configuration
+
+## kubernetes/namespace.yaml
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opendevagent-prod
+  labels:
+    app: opendevagent
+    environment: prod
+    managed-by: terraform
+```
+
+## kubernetes/configmap.yaml
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opendevagent-config
+  namespace: opendevagent-prod
+data:
+  LOG_LEVEL: "INFO"
+  ENVIRONMENT: "production"
+  NEXT_PUBLIC_BACKEND_URL: "https://api.opendevagent.com"
+```
+
+## kubernetes/backend-deployment.yaml
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opendevagent-backend
+  namespace: opendevagent-prod
+  labels:
+    app: opendevagent
+    component: backend
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  
+  selector:
+    matchLabels:
+      app: opendevagent
+      component: backend
+  
+  template:
+    metadata:
+      labels:
+        app: opendevagent
+        component: backend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - backend
+              topologyKey: kubernetes.io/hostname
+      
+      serviceAccountName: opendevagent-backend
+      
+      containers:
+      - name: backend
+        image: REGISTRY/opendevagent-backend:VERSION
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        
+        env:
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: opendevagent-config
+              key: ENVIRONMENT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: opendevagent-config
+              key: LOG_LEVEL
+        - name: OPENROUTER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: opendevagent-secrets
+              key: openrouter-api-key
+        - name: SANDBOX_TIMEOUT
+          value: "60"
+        - name: SANDBOX_MEMORY
+          value: "2g"
+        - name: SANDBOX_CPUS
+          value: "2"
+        
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        volumeMounts:
+        - name: work-dir
+          mountPath: /app/work_dir
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+      
+      volumes:
+      - name: work-dir
+        persistentVolumeClaim:
+          claimName: opendevagent-workdir-pvc
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+```
+
+## kubernetes/frontend-deployment.yaml
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opendevagent-frontend
+  namespace: opendevagent-prod
+  labels:
+    app: opendevagent
+    component: frontend
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  
+  selector:
+    matchLabels:
+      app: opendevagent
+      component: frontend
+  
+  template:
+    metadata:
+      labels:
+        app: opendevagent
+        component: frontend
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+    
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - frontend
+              topologyKey: kubernetes.io/hostname
+      
+      serviceAccountName: opendevagent-frontend
+      
+      containers:
+      - name: frontend
+        image: REGISTRY/opendevagent-frontend:VERSION
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+        
+        env:
+        - name: NEXT_PUBLIC_BACKEND_URL
+          valueFrom:
+            configMapKeyRef:
+              name: opendevagent-config
+              key: NEXT_PUBLIC_BACKEND_URL
+        
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+```
+
+## kubernetes/backend-service.yaml
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: opendevagent-backend
+  namespace: opendevagent-prod
+  labels:
+    app: opendevagent
+    component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: opendevagent
+    component: backend
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 3600
+```
+
+## kubernetes/frontend-service.yaml
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: opendevagent-frontend
+  namespace: opendevagent-prod
+  labels:
+    app: opendevagent
+    component: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: opendevagent
+    component: frontend
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+```
+
+## kubernetes/ingress.yaml
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opendevagent-ingress
+  namespace: opendevagent-prod
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.opendevagent.com
+    - app.opendevagent.com
+    secretName: opendevagent-tls
+  
+  rules:
+  - host: api.opendevagent.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: opendevagent-backend
+            port:
+              number: 8000
+  
+  - host: app.opendevagent.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: opendevagent-frontend
+            port:
+              number: 3000
+```
+
+## kubernetes/hpa.yaml
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: opendevagent-backend-hpa
+  namespace: opendevagent-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: opendevagent-backend
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: opendevagent-frontend-hpa
+  namespace: opendevagent-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: opendevagent-frontend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 85
+```
+
+## kubernetes/pvc.yaml
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opendevagent-workdir-pvc
+  namespace: opendevagent-prod
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+```
+
+## kubernetes/rbac.yaml
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opendevagent-backend
+  namespace: opendevagent-prod
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opendevagent-frontend
+  namespace: opendevagent-prod
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opendevagent-backend
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumes", "persistentvolumeclaims"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opendevagent-backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opendevagent-backend
+subjects:
+- kind: ServiceAccount
+  name: opendevagent-backend
+  namespace: opendevagent-prod
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opendevagent-frontend
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opendevagent-frontend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opendevagent-frontend
+subjects:
+- kind: ServiceAccount
+  name: opendevagent-frontend
+  namespace: opendevagent-prod
+```
+
+## kubernetes/secrets.yaml (EXAMPLE - DO NOT COMMIT WITH VALUES)
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opendevagent-secrets
+  namespace: opendevagent-prod
+type: Opaque
+stringData:
+  openrouter-api-key: "sk-or-v1-YOUR-KEY-HERE"
+```
+
+## kubernetes/networkpolicy.yaml
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opendevagent-backend-policy
+  namespace: opendevagent-prod
+spec:
+  podSelector:
+    matchLabels:
+      component: backend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - podSelector:
+        matchLabels:
+          component: frontend
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opendevagent-frontend-policy
+  namespace: opendevagent-prod
+spec:
+  podSelector:
+    matchLabels:
+      component: frontend
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          component: backend
+    ports:
+    - protocol: TCP
+      port: 8000
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+```
+
+## kubernetes/monitoring.yaml
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-backend
+  namespace: opendevagent-prod
+  labels:
+    app: opendevagent
+    component: monitoring
+spec:
+  selector:
+    app: opendevagent
+    component: backend
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: 8000
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: opendevagent
+  namespace: opendevagent-prod
+spec:
+  selector:
+    matchLabels:
+      app: opendevagent
+  endpoints:
+  - port: metrics
+    interval: 30s
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-operator
+  namespace: opendevagent-prod
+  labels:
+    app: prometheus
+spec:
+  ports:
+  - name: web
+    port: 9090
+    targetPort: 9090
+  selector:
+    app: prometheus
+```
+
+## Kubernetes Deployment Commands
+
+```bash
+# Create namespace
+kubectl create namespace opendevagent-prod
+kubectl label namespace opendevagent-prod name=opendevagent-prod
+
+# Create secrets (replace with actual values)
+kubectl create secret generic opendevagent-secrets \
+  --from-literal=openrouter-api-key=sk-or-v1-YOUR-KEY \
+  -n opendevagent-prod
+
+# Apply configurations
+kubectl apply -f kubernetes/configmap.yaml
+kubectl apply -f kubernetes/rbac.yaml
+kubectl apply -f kubernetes/pvc.yaml
+kubectl apply -f kubernetes/backend-deployment.yaml
+kubectl apply -f kubernetes/frontend-deployment.yaml
+kubectl apply -f kubernetes/backend-service.yaml
+kubectl apply -f kubernetes/frontend-service.yaml
+kubectl apply -f kubernetes/hpa.yaml
+kubectl apply -f kubernetes/networkpolicy.yaml
+kubectl apply -f kubernetes/ingress.yaml
+kubectl apply -f kubernetes/monitoring.yaml
+
+# Check status
+kubectl get all -n opendevagent-prod
+kubectl get pvc -n opendevagent-prod
+kubectl get hpa -n opendevagent-prod
+
+# View logs
+kubectl logs -n opendevagent-prod -l component=backend -f
+kubectl logs -n opendevagent-prod -l component=frontend -f
+
+# Scale manually (if needed)
+kubectl scale deployment opendevagent-backend --replicas=5 -n opendevagent-prod
+
+# Port forward for testing
+kubectl port-forward -n opendevagent-prod svc/opendevagent-backend 8000:8000
+kubectl port-forward -n opendevagent-prod svc/opendevagent-frontend 3000:3000
+
+# Delete deployment
+kubectl delete namespace opendevagent-prod
+```
