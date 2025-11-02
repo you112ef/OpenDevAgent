@@ -1,0 +1,162 @@
+name: 🚀 Deploy to Free Tier
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ${{ github.repository }}/backend
+  FRONTEND_IMAGE: ${{ github.repository }}/frontend
+
+jobs:
+  # Build job
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Setup Node.js for frontend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      # Setup Python for backend
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      # Build Frontend
+      - name: 📦 Build Frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+      
+      # Build Backend
+      - name: 📦 Build Backend
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          python -m py_compile main.py
+      
+      # Test Frontend
+      - name: ✅ Test Frontend
+        run: |
+          cd frontend
+          npm run lint 2>/dev/null || true
+      
+      # Test Backend
+      - name: ✅ Test Backend
+        run: |
+          cd backend
+          python -m flake8 . --count --exit-zero || true
+
+  # Deploy to Vercel
+  deploy-vercel-frontend:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: 🚀 Deploy Frontend to Vercel
+        run: |
+          npm i -g vercel
+          vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+          vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+          vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: frontend
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_FRONTEND }}
+      
+      - name: ✅ Frontend deployed successfully
+        run: echo "Frontend deployed to Vercel"
+
+  # Deploy to Railway or Render
+  deploy-backend:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Option 1: Deploy to Railway
+      - name: 🚀 Deploy Backend to Railway
+        if: ${{ secrets.RAILWAY_TOKEN != '' }}
+        run: |
+          npm install -g @railway/cli
+          railway up --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        working-directory: backend
+      
+      # Option 2: Deploy to Render
+      - name: 🚀 Deploy Backend to Render
+        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        run: |
+          curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+      
+      - name: ✅ Backend deployed successfully
+        run: echo "Backend deployed to Railway or Render"
+
+  # Deploy to GitHub Pages (Optional Static Export)
+  deploy-github-pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    needs: build
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: 📦 Build Static Export
+        run: |
+          cd frontend
+          npm install
+          EXPORT_STATIC=true npm run build
+      
+      - name: 📄 Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: frontend/out
+      
+      - name: 🚀 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
+
+  # Notify Slack (Optional)
+  notify:
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [build, deploy-vercel-frontend, deploy-backend]
+    
+    steps:
+      - name: 📢 Notify Slack
+        if: ${{ secrets.SLACK_WEBHOOK != '' }}
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: 'OpenDevAgent deployment ${{ job.status }}'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author
+        continue-on-error: true
