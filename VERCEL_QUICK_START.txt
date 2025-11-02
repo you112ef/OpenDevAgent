@@ -1,0 +1,48 @@
+╔═══════════════════════════════════════════════════════════════╗
+║    🚀 OpenDevAgent - Vercel Deployment (3 Steps Only!)       ║
+╚═══════════════════════════════════════════════════════════════╝
+
+📍 YOUR REPOSITORY:
+   https://github.com/You112ef/OpenDevAgent
+
+═══════════════════════════════════════════════════════════════
+
+🎯 STEP 1: CREATE VERCEL ACCOUNT (5 min)
+   → Go to: https://vercel.com/signup
+   → Click: "Continue with GitHub"
+   → Authorize Vercel
+
+═══════════════════════════════════════════════════════════════
+
+🎯 STEP 2: IMPORT PROJECT (2 min)
+   → Go to: https://vercel.com/new
+   → Select: You112ef/OpenDevAgent
+   → Click: "Import"
+
+═══════════════════════════════════════════════════════════════
+
+🎯 STEP 3: CONFIGURE & DEPLOY (3 min)
+
+   A) Root Directory:
+      Edit → Select: frontend/
+   
+   B) Environment Variables:
+      Add → OPENROUTER_API_KEY = (your key here)
+   
+   C) Click: "Deploy"
+
+   ✓ Wait for green checkmark
+   ✓ Copy the Production URL
+   ✓ Your app is LIVE! 🎉
+
+═══════════════════════════════════════════════════════════════
+
+✨ AFTER DEPLOYMENT:
+   • Production URL will be: https://opendeveagent.vercel.app
+   • Every GitHub push = Auto-deploy ⚡
+   • Free SSL certificate included ✓
+
+═══════════════════════════════════════════════════════════════
+
+⏱️  TOTAL TIME: ~10 minutes
+
