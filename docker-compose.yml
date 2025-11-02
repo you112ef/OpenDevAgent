@@ -1,0 +1,45 @@
+version: '3.9'
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - opendev
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - SANDBOX_DOCKER_SOCKET=/var/run/docker.sock
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend/work_dir:/app/work_dir
+    depends_on:
+      - sandbox-builder
+    networks:
+      - opendev
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  sandbox-builder:
+    build:
+      context: .
+      dockerfile: sandbox_templates/Dockerfile.python
+    image: opendev-sandbox:python
+    networks:
+      - opendev
+
+networks:
+  opendev:
+    driver: bridge
